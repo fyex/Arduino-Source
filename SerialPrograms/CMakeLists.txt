@@ -1288,6 +1288,8 @@ file(GLOB MAIN_SOURCES
     Source/PokemonSV/Inference/Boxes/PokemonSV_StatsResetChecker.h
     Source/PokemonSV/Inference/Dialogs/PokemonSV_DialogArrowDetector.cpp
     Source/PokemonSV/Inference/Dialogs/PokemonSV_DialogArrowDetector.h
+    Source/PokemonSV/Inference/Dialogs/PokemonSV_DialogBubbleDetector.cpp
+    Source/PokemonSV/Inference/Dialogs/PokemonSV_DialogBubbleDetector.h
     Source/PokemonSV/Inference/Dialogs/PokemonSV_DialogDetector.cpp
     Source/PokemonSV/Inference/Dialogs/PokemonSV_DialogDetector.h
     Source/PokemonSV/Inference/Dialogs/PokemonSV_GradientArrowDetector.cpp

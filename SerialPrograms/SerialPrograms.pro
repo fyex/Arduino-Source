@@ -642,6 +642,7 @@ SOURCES += \
     Source/PokemonSV/Inference/Boxes/PokemonSV_IvJudgeReader.cpp \
     Source/PokemonSV/Inference/Boxes/PokemonSV_StatsResetChecker.cpp \
     Source/PokemonSV/Inference/Dialogs/PokemonSV_DialogArrowDetector.cpp \
+    Source/PokemonSV/Inference/Dialogs/PokemonSV_DialogBubbleDetector.cpp \
     Source/PokemonSV/Inference/Dialogs/PokemonSV_DialogDetector.cpp \
     Source/PokemonSV/Inference/Dialogs/PokemonSV_GradientArrowDetector.cpp \
     Source/PokemonSV/Inference/Map/PokemonSV_MapDetector.cpp \
@@ -1692,6 +1693,7 @@ HEADERS += \
     Source/PokemonSV/Inference/Boxes/PokemonSV_IvJudgeReader.h \
     Source/PokemonSV/Inference/Boxes/PokemonSV_StatsResetChecker.h \
     Source/PokemonSV/Inference/Dialogs/PokemonSV_DialogArrowDetector.h \
+    Source/PokemonSV/Inference/Dialogs/PokemonSV_DialogBubbleDetector.h \
     Source/PokemonSV/Inference/Dialogs/PokemonSV_DialogDetector.h \
     Source/PokemonSV/Inference/Dialogs/PokemonSV_GradientArrowDetector.h \
     Source/PokemonSV/Inference/Map/PokemonSV_MapDetector.h \
