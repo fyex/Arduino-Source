@@ -7,8 +7,6 @@
 #include "CommonFramework/GlobalSettingsPanel.h"
 #include "CommonFramework/Exceptions/FatalProgramException.h"
 #include "CommonFramework/Exceptions/OperationFailedException.h"
-#include "CommonFramework/ImageTools/BinaryImage_FilterRgb32.h"
-#include "CommonFramework/ImageTypes/BinaryImage.h"
 #include "CommonFramework/InferenceInfra/InferenceRoutines.h"
 #include "CommonFramework/Notifications/ProgramNotifications.h"
 #include "CommonFramework/OCR/OCR_NumberReader.h"
@@ -17,13 +15,14 @@
 #include "CommonFramework/VideoPipeline/VideoOverlay.h"
 #include "CommonFramework/VideoPipeline/VideoOverlayScopes.h"
 #include "CommonFramework/Tools/VideoResolutionCheck.h"
-#include "Kernels/Waterfill/Kernels_Waterfill_Session.h"
 #include "Pokemon/Pokemon_Strings.h"
 #include "PokemonSV/PokemonSV_Settings.h"
+#include "PokemonSV/Inference/Dialogs/PokemonSV_DialogBubbleDetector.h"
 #include "PokemonSV/Inference/Dialogs/PokemonSV_DialogDetector.h"
 #include "PokemonSV/Inference/PokemonSV_AuctionItemNameReader.h"
 #include "PokemonSV/Inference/Overworld/PokemonSV_OverworldDetector.h"
 #include "PokemonSV/Programs/PokemonSV_GameEntry.h"
+#include "PokemonSV/Programs/PokemonSV_Navigation.h"
 #include "PokemonSV/Programs/PokemonSV_SaveGame.h"
 #include "PokemonSV/Resources/PokemonSV_AuctionItemNames.h"
 #include "PokemonSwSh/Commands/PokemonSwSh_Commands_DateSpam.h"
@@ -31,8 +30,10 @@
 
 #include "PokemonSV_AuctionFarmer.h"
 
+#include <algorithm>
 #include <iostream>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace PokemonAutomation{
 namespace NintendoSwitch{
@@ -93,75 +94,30 @@ AuctionFarmer::AuctionFarmer()
         &NOTIFICATION_ERROR_FATAL,
     })
     , m_advanced_options("<font size=4><b>Advanced Options: (developer only)</b></font>")
-    , ONE_NPC("<b>One NPC:</b><br>Check only the NPC you're standing in front of. (Multiple NPCs in development)", LockMode::LOCK_WHILE_RUNNING, true)
+    , ONE_NPC("<b>One NPC:</b><br>Check only the NPC you're standing in front of.", LockMode::LOCK_WHILE_RUNNING, true)
+    , OPTIMAL_X("<b>Optimal x:</b>Intended x-coordinate for the center of dialog bubbles.", LockMode::LOCK_WHILE_RUNNING, 0.3, 0.0, 1.0)
+    , X_ALPHA("<b>x alpha:</b>Threshold for the acceptable x-coordinate range.", LockMode::LOCK_WHILE_RUNNING, 0.05, 0.0, 1.0)
 {
     PA_ADD_OPTION(LANGUAGE);
+    PA_ADD_OPTION(ONE_NPC);
     PA_ADD_OPTION(TARGET_ITEMS);
     PA_ADD_OPTION(NOTIFICATIONS);
     if (PreloadSettings::instance().DEVELOPER_MODE) {
         PA_ADD_STATIC(m_advanced_options);
-        PA_ADD_OPTION(ONE_NPC);
+        PA_ADD_OPTION(OPTIMAL_X);
+        PA_ADD_OPTION(X_ALPHA);
     }
 }
 
 
 std::vector<ImageFloatBox> AuctionFarmer::detect_dialog_boxes(const ImageViewRGB32& screen) {
-    using namespace Kernels::Waterfill;
-
-    uint32_t MIN_BORDER_THRESHOLD = 0xffc07000;
-    uint32_t MAX_BORDER_THRESHOLD = 0xffffc550;
-
-    uint32_t MIN_YELLOW_THRESHOLD = 0xffd0b000;
-    uint32_t MAX_YELLOW_THRESHOLD = 0xffffff30;
-
-    size_t width = screen.width();
-    size_t height = screen.height();
-
-
-    std::vector<ImageFloatBox> dialog_boxes;
-    {
-        PackedBinaryMatrix border_matrix = compress_rgb32_to_binary_range(screen, MIN_BORDER_THRESHOLD, MAX_BORDER_THRESHOLD);
-
-        std::unique_ptr<WaterfillSession> session = make_WaterfillSession(border_matrix);
-        auto iter = session->make_iterator(50);
-        WaterfillObject object;
-        while (iter->find_next(object, true)) {
-            //  Discard objects touching the edge of the screen or bottom right corner where the map is located or if the object is too small
-            if (object.min_x == 0 || object.min_y == 0 // touching left or top edge
-                || object.max_x + 1 >= width || object.max_y + 1 >= height // touching right or bottom edge
-                || (object.max_x > width * 0.82 && object.max_y > height * 0.68) // touches mini map area
-                || object.width() < width * 0.0926 || object.height() < height * 0.0926 // object is too small
-            ){
-                continue;
-            }
-
-            // check for yellow inside the orange border
-            ImagePixelBox border_pixel_box(object);
-            ImageFloatBox border_float_box = pixelbox_to_floatbox(screen, border_pixel_box);
-            ImageViewRGB32 dialog = extract_box_reference(screen, border_pixel_box);
-
-            PackedBinaryMatrix yellow_matrix = compress_rgb32_to_binary_range(dialog, MIN_YELLOW_THRESHOLD, MAX_YELLOW_THRESHOLD);
-
-            std::unique_ptr<WaterfillSession> yellow_session = make_WaterfillSession(yellow_matrix);
-            auto yellow_iter = yellow_session->make_iterator(300);
-            WaterfillObject yellow_object;
-            while (yellow_iter->find_next(yellow_object, true)) {
-                //  Discard small objects
-                if (object.width() < width * 0.0925 || object.height() < height * 0.0925) {
-                    continue;
-                }
-                ImagePixelBox dialog_pixel_box(yellow_object);
-                
-                ImageFloatBox translated_dialog_box = translate_to_parent(screen, border_float_box, dialog_pixel_box);
-                dialog_boxes.emplace_back(translated_dialog_box);
-            }
-        }
-    }
+    DialogBubbleDetector detector(COLOR_GREEN, ImageFloatBox(0.0, 0.0, 0.999, 0.999));
+    std::vector<ImageFloatBox> dialog_boxes = detector.detect_all(screen);
     return dialog_boxes;
 }
 
 
-void AuctionFarmer::reset_auctions(SingleSwitchProgramEnvironment& env, BotBaseContext& context, bool do_full_reset, uint8_t& year){
+void AuctionFarmer::reset_auctions(SingleSwitchProgramEnvironment& env, BotBaseContext& context, bool do_full_reset, uint8_t& year, bool current_postion_is_east){
     try{
         if (do_full_reset){
             if (year == MAX_YEAR){
@@ -174,10 +130,9 @@ void AuctionFarmer::reset_auctions(SingleSwitchProgramEnvironment& env, BotBaseC
             home_roll_date_enter_game_autorollback(env.console, context, year);
         }
         pbf_wait(context, 1 * TICKS_PER_SECOND);
-
-        pbf_press_button(context, BUTTON_HOME, 10, GameSettings::instance().GAME_TO_HOME_DELAY);
         context.wait_for_all_requests();
-        reset_game_from_home(env.program_info(), env.console, context, TICKS_PER_SECOND);
+
+        reset_game(env.program_info(), env.console, context);
     }catch (OperationFailedException& e){
         AuctionFarmer_Descriptor::Stats& stats = env.current_stats<AuctionFarmer_Descriptor::Stats>();
         stats.m_errors++;
@@ -185,6 +140,7 @@ void AuctionFarmer::reset_auctions(SingleSwitchProgramEnvironment& env, BotBaseC
         throw FatalProgramException(std::move(e));
     }
 }
+
 
 std::vector<std::pair<AuctionOffer, ImageFloatBox>> AuctionFarmer::check_offers(SingleSwitchProgramEnvironment& env, BotBaseContext& context) {
     AuctionFarmer_Descriptor::Stats& stats = env.current_stats<AuctionFarmer_Descriptor::Stats>();
@@ -212,7 +168,6 @@ std::vector<std::pair<AuctionOffer, ImageFloatBox>> AuctionFarmer::check_offers(
         ImageViewRGB32 dialog = extract_box_reference(screen, dialog_box);
         ImageViewRGB32 offer_image = extract_box_reference(dialog, offer_box);
 
-
         const double LOG10P_THRESHOLD = -1.5;
         std::string best_item;
         OCR::StringMatchResult result = AuctionItemNameReader::instance().read_substring(
@@ -236,6 +191,19 @@ std::vector<std::pair<AuctionOffer, ImageFloatBox>> AuctionFarmer::check_offers(
     return offers;
 }
 
+bool AuctionFarmer::are_offers_equal(std::vector<std::pair<AuctionOffer, ImageFloatBox>>& first_offers, std::vector<std::pair<AuctionOffer, ImageFloatBox>>& second_offers) {
+    if (first_offers.size() == second_offers.size()) {
+        std::unordered_multiset<std::string> first;
+        std::unordered_multiset<std::string> second;
+        for (size_t i = 0; i < first_offers.size(); i++) {
+            first.emplace(first_offers[i].first.item);
+            second.emplace(second_offers[i].first.item);
+        }
+        return first == second;
+    }
+    return false;
+}
+
 bool AuctionFarmer::is_good_offer(AuctionOffer offer) {
     // Special handling for Japanese bottle cap items
     bool any_bottle_cap = false;
@@ -248,19 +216,19 @@ bool AuctionFarmer::is_good_offer(AuctionOffer offer) {
 }
 
 // Move to auctioneer and interact
-void AuctionFarmer::move_to_auctioneer(SingleSwitchProgramEnvironment& env, BotBaseContext& context, AuctionOffer offer) {
+void AuctionFarmer::move_to_auctioneer(SingleSwitchProgramEnvironment& env, BotBaseContext& context, AuctionOffer offer, bool& is_new_position_east) {
     AdvanceDialogWatcher advance_detector(COLOR_YELLOW);
 
     size_t tries = 0;
     while (tries < 10) {
         if (!ONE_NPC) {
-            move_dialog_to_center(env, context, offer);
-            pbf_move_left_joystick(context, 128, 0, 60, 10);
+            move_to_dialog(env, context, offer, is_new_position_east);
+            context.wait_for_all_requests();
         }
 
+        // interact with the NPC
         pbf_press_button(context, BUTTON_A, 20, 100);
-        int ret = wait_until(env.console, context, Milliseconds(4000), { advance_detector });
-
+        int ret = wait_until(env.console, context, Milliseconds(6000), { advance_detector });
         if (ret == 0) {
             return;
         }
@@ -273,61 +241,194 @@ void AuctionFarmer::move_to_auctioneer(SingleSwitchProgramEnvironment& env, BotB
     );
 }
 
-// Dialog is the only piece of orientation we have, so the goal is to put it into the center of the screen so we know in which direction the character walks.
-// This is only used for multiple NPCs.
-void AuctionFarmer::move_dialog_to_center(SingleSwitchProgramEnvironment& env, BotBaseContext& context, AuctionOffer wanted) {
-    float center_x = 0.0f;
-    float center_y = 0.0f;
-    bool offer_visible = false;
-
-    while (center_x < 0.43 || center_x > 0.57) {
-        context.wait_for_all_requests();
-        std::vector<std::pair<AuctionOffer, ImageFloatBox>> offers = check_offers(env, context);
-
-        for (std::pair<AuctionOffer, ImageFloatBox> offer : offers) {
-            if (offer.first.item != wanted.item) {
-                continue;
-            }
-            offer_visible = true;
-
-            center_x = offer.second.x + (0.5 * offer.second.width);
-            center_y = offer.second.y + (0.5 * offer.second.height);
-
-
-            // check whether the stop condition is fullfilled by now.
-            if (!(center_x < 0.43 || center_x > 0.57)) {
-                break;
-            }
-
-            uint8_t distance_x = (uint16_t)((center_x) * 255);
-            uint8_t distance_y = (uint16_t)((center_y * 255));
-            env.console.log(std::to_string(distance_x));
-            env.console.log(std::to_string(distance_y));
-
-            pbf_move_right_joystick(context, distance_x, distance_y, 20, 20);
-
-            break;
-        }
-
-        if (!offer_visible) {
-            throw OperationFailedException(
-                ErrorReport::SEND_ERROR_REPORT, env.console,
-                "Lost offer dialog for wanted item.",
-                true
-            );
+std::pair<AuctionOffer, ImageFloatBox> AuctionFarmer::find_target(SingleSwitchProgramEnvironment& env, BotBaseContext& context, AuctionOffer wanted) {
+    std::vector<std::pair<AuctionOffer, ImageFloatBox>> offers = check_offers(env, context);
+    for (std::pair<AuctionOffer, ImageFloatBox> offer : offers) {
+        if (offer.first.item == wanted.item) {
+            return offer;
         }
     }
+
+    throw OperationFailedException(
+        ErrorReport::SEND_ERROR_REPORT, env.console,
+        "Lost offer dialog for wanted item.",
+        true
+    );
 }
 
-void AuctionFarmer::reset_position(SingleSwitchProgramEnvironment& env, BotBaseContext& context) {
-    if (ONE_NPC) {
-        // No movement, player character should always be directly in front of an auctioneer.
-        return;
+void AuctionFarmer::get_bubble_center(ImageFloatBox bubble, float& center_x, float& center_y) {
+    center_x = bubble.x + (0.5 * bubble.width);
+    center_y = bubble.y + (0.5 * bubble.height);
+}
+
+void AuctionFarmer::find_target_bubble_center(SingleSwitchProgramEnvironment& env, BotBaseContext& context, AuctionOffer wanted, float& center_x, float& center_y) {
+    std::pair<AuctionOffer, ImageFloatBox> target = find_target(env, context, wanted);
+    get_bubble_center(target.second, center_x, center_y);
+}
+
+
+
+// Dialog is the only piece of orientation we have, so the goal is to walk next to the dialog bubble
+// This is only used for multiple NPCs.
+void AuctionFarmer::move_to_dialog(SingleSwitchProgramEnvironment& env, BotBaseContext& context, AuctionOffer wanted, bool& is_new_position_east) {
+    float center_x = 0.0f;
+    float center_y = 0.0f;
+
+    float min_y = 0.43f;
+    float max_y = 0.57f;
+
+    context.wait_for_all_requests();
+    find_target_bubble_center(env, context, wanted, center_x, center_y);
+
+    // move up or down
+    uint32_t up_ticks = 0;
+    uint32_t down_ticks = 0;
+    while (center_y < min_y || center_y > max_y) {
+        bool move_up = center_y < min_y;
+        uint8_t joystick_y = move_up ? 64 : 192;
+        uint16_t joystick_ticks = std::max(std::max(min_y - center_y, center_y - max_y), 0.1f) * TICKS_PER_SECOND * 5;
+        if (move_up) {
+            up_ticks += joystick_ticks;
+        }
+        else {
+            down_ticks += joystick_ticks;
+        }
+
+        pbf_move_left_joystick(context, 128, joystick_y, joystick_ticks, 20);
+
+        context.wait_for_all_requests();
+        find_target_bubble_center(env, context, wanted, center_x, center_y);
+    }
+    
+    // camera is roughly looking towards east: walking forward/joystick up means walking eastward
+    is_new_position_east = up_ticks > down_ticks;
+
+    // move left or right, no need to be exact as we can just bump into the tables
+    uint8_t joystick_x = center_x < 0.5 ? 64 : 192;
+    pbf_move_left_joystick(context, joystick_x, 128, 250, 20);
+}
+
+std::vector<std::pair<float, float>> AuctionFarmer::detect_sorted_dialog_centers(SingleSwitchProgramEnvironment& env, BotBaseContext& context) {
+    context.wait_for_all_requests();
+    VideoSnapshot screen = env.console.video().snapshot();
+    std::vector<ImageFloatBox> dialog_boxes = detect_dialog_boxes(screen);
+
+    std::vector<std::pair<float, float>> dialog_centers(dialog_boxes.size(), std::pair<float, float>(-1.0f, -1.0f));
+    for (size_t i = 0; i < dialog_boxes.size(); i++) {
+        get_bubble_center(dialog_boxes[i], dialog_centers[i].first, dialog_centers[i].second);
     }
 
-    // move backwards, TODO: check position(?) and orientation
-    pbf_move_left_joystick(context, 128, 255, 50, 20);
-    return;
+    // Sort the dilaog centers. We want the top-left dialog to use it as an orientation point.
+    // Dialog bubbles are either on the left or right side of the screen, as long as they are on the same side we only care about the y-value.
+    // Sort by column (ingame: North-east, north-west, south-east, south-west).
+    std::sort(dialog_centers.begin(), dialog_centers.end(), [](std::pair<float, float> left, std::pair<float, float> right) {
+        if ((left.first < 0.5 && right.first < 0.5) || (left.first > 0.5 && right.first > 0.5)) {
+            return left.second < right.second;
+        }
+        return left.first < 0.5 && right.first > 0.5;
+    });
+
+    return dialog_centers;
+}
+
+bool AuctionFarmer::reset_position(SingleSwitchProgramEnvironment& env, BotBaseContext& context, bool move_down) {
+    if (ONE_NPC) {
+        // No movement, player character should always be directly in front of an npc.
+        return false;
+    }
+
+    reset_orientation(env, context, false);
+    std::vector<std::pair<float, float>> dialog_centers = detect_sorted_dialog_centers(env, context);
+
+    OverlayBoxScope optimum_left(env.console.overlay(), ImageFloatBox(OPTIMAL_X - (X_ALPHA / 2.0), 0.0, X_ALPHA, 1.0), COLOR_DARK_BLUE);
+    OverlayBoxScope optimum_right(env.console.overlay(), ImageFloatBox(1 - (OPTIMAL_X - (X_ALPHA / 2.0)), 0.0, X_ALPHA, 1.0), COLOR_DARK_BLUE);
+
+    bool did_move = false;
+    size_t tries = 0;
+    while (dialog_centers.size() < 3 || !is_good_dialog_center(dialog_centers[0].first, dialog_centers[0].second)) {
+        // Restart in case we lose all orientation points, i.e. dialog bubbles
+        if (dialog_centers.empty()) {
+            VideoSnapshot screen = env.console.video().snapshot();
+            if (tries == 0) {
+                AuctionFarmer_Descriptor::Stats& stats = env.current_stats<AuctionFarmer_Descriptor::Stats>();
+                stats.m_errors++;
+                send_program_recoverable_error_notification(env, NOTIFICATION_ERROR_RECOVERABLE, "Could not detect any offer dialogs. Attempting to recover.", screen);
+            }
+            tries++;
+            if (tries <= 3) {
+                env.console.log("Lost all dialog bubbles. Attempting to reset game...");
+            }
+            else if (tries <= 5) {
+                env.console.log("Unable to detect dialog bubbles. Waiting before attempting to reset...");
+                context.wait_for(Milliseconds(180000));
+            }
+            else {
+                throw OperationFailedException(
+                    ErrorReport::SEND_ERROR_REPORT, env.console,
+                    "Could not reset player position.",
+                    true
+                );
+            }
+            reset_game(env.program_info(), env.console, context);
+            reset_orientation(env, context, false);
+
+            dialog_centers = detect_sorted_dialog_centers(env, context);
+            continue;
+        }
+
+        float optimal_x = OPTIMAL_X;
+        float optimal_y = 0.3f;
+        float center_x = dialog_centers[0].first;
+        float center_y = dialog_centers[0].second;
+
+        OverlayBoxScope center(env.console.overlay(), ImageFloatBox(center_x, center_y, 0.001, 0.001), COLOR_MAGENTA);
+
+        float joystick_modifier_x = 0.0f;
+        uint8_t joystick_x = 128;
+        if (!is_good_dialog_center(center_x, center_y)) {
+            float diff_left = optimal_x - center_x;
+            float diff_right = (1 - optimal_x) - center_x;
+            joystick_modifier_x = std::abs(diff_left) < std::abs(diff_right) ? diff_left : diff_right;
+            joystick_x = (joystick_modifier_x < 0) ? 192 : 64;
+        }     
+        uint16_t joystick_ticks_x = std::abs(joystick_modifier_x * TICKS_PER_SECOND * 5) + 10; // +10, so there is always some change, but not overshooting the target
+        pbf_move_left_joystick(context, joystick_x, 128, joystick_ticks_x, 20);
+
+        
+        float joystick_modifier_y = 0.0f;
+        float diff_top = optimal_y - center_y;
+        joystick_modifier_y = diff_top;
+
+        uint8_t joystick_y = move_down ? 192 : 64;
+        uint16_t joystick_ticks_y = std::abs(joystick_modifier_y * TICKS_PER_SECOND * 5);
+
+        pbf_move_left_joystick(context, 128, joystick_y, joystick_ticks_y, 20);
+
+        dialog_centers = detect_sorted_dialog_centers(env, context);
+
+        did_move = true;
+    }
+
+    return did_move;
+}
+
+bool AuctionFarmer::is_good_dialog_center(float center_x, float center_y) {
+    // Optimal x position does depend on y. 
+    // However, since the program can correct later we assume a vertical line, i.e. a y-independent "optimal" x-coordinate
+    float optimal_x = OPTIMAL_X;
+    float max_distance = X_ALPHA;
+   
+    return std::abs(optimal_x - center_x) <= max_distance || std::abs((1- optimal_x) - center_x) <= max_distance;
+}
+
+
+void AuctionFarmer::reset_orientation(SingleSwitchProgramEnvironment& env, BotBaseContext& context, bool character_orientation) {
+    if (character_orientation) {
+        open_map_from_overworld(env.program_info(), env.console, context);
+        leave_phone_to_overworld(env.program_info(), env.console, context);
+        pbf_mash_button(context, BUTTON_L, 20);
+    }
+    pbf_move_right_joystick(context, 128, 255, 2 * TICKS_PER_SECOND, 20);
 }
 
 
@@ -432,39 +533,53 @@ void AuctionFarmer::program(SingleSwitchProgramEnvironment& env, BotBaseContext&
     context.wait_for_all_requests();
 
     uint8_t year = MAX_YEAR;
-
+    bool current_position_is_east = true;
 
     while (true) {
         send_program_status_notification(env, NOTIFICATION_STATUS_UPDATE);
 
-        reset_auctions(env, context, true, year);
+        reset_orientation(env, context, true);
+        reset_auctions(env, context, true, year, current_position_is_east);
+        bool did_move = reset_position(env, context, current_position_is_east);
+        if (did_move) {
+            reset_orientation(env, context, true);
+            context.wait_for_all_requests();
+            save_game_from_overworld(env.program_info(), env.console, context);
+        }
+        
         stats.m_resets++;
         env.update_stats();
         
-        bool good_offer = false;
-        while (!good_offer) {
-            size_t npc_tries = 0;
+        bool should_increase_date = false;
+        size_t npc_tries = 0;
+        std::vector<std::pair<AuctionOffer, ImageFloatBox>> old_offers;
+        while (!should_increase_date) {
+            
             if (!ONE_NPC) {
-                pbf_move_right_joystick(context, 128, 255, 2 * TICKS_PER_SECOND, 20);
+                reset_orientation(env, context, false);
             }
 
             std::vector<std::pair<AuctionOffer, ImageFloatBox>> offers = check_offers(env, context);
+            if (are_offers_equal(old_offers, offers)) {
+                should_increase_date = true;
+            }
+            old_offers = offers;
+
             for (std::pair<AuctionOffer, ImageFloatBox>& offer_pair : offers){
                 AuctionOffer offer = offer_pair.first;
                 if (is_good_offer(offer)) {
                     try {
-                        move_to_auctioneer(env, context, offer);
+                        move_to_auctioneer(env, context, offer, current_position_is_east);
                     }
                     catch (OperationFailedException& e){
                         stats.m_errors++;
-                        e.send_notification(env, NOTIFICATION_ERROR_RECOVERABLE);
 
                         npc_tries++;
                         // if ONE_NPC the program already tries multiple times without change to compensate for dropped inputs
                         // at this point it is more likely to be non-recoverable
                         size_t max_npc_tries = ONE_NPC ? 1 : 3;
 
-                        if (npc_tries < max_npc_tries) {
+                        if (npc_tries <= max_npc_tries) {
                             VideoSnapshot screen = env.console.video().snapshot();
                             send_program_recoverable_error_notification(env, NOTIFICATION_ERROR_RECOVERABLE, e.message(), screen);
                         }
@@ -479,19 +594,23 @@ void AuctionFarmer::program(SingleSwitchProgramEnvironment& env, BotBaseContext&
                     }
 
                     bid_on_item(env, context, offer);
-                    reset_position(env, context);
 
-                    good_offer = true;
+                    should_increase_date = true;
+                    break;
                 }
             }
-            if (!good_offer){
-                reset_auctions(env, context, false, year);
+            if (!should_increase_date) {
+                reset_auctions(env, context, false, year, current_position_is_east);
                 stats.m_resets++;
             }
 
             env.update_stats();
             pbf_wait(context, 125);
             context.wait_for_all_requests();
+
+            if (did_move) {
+                should_increase_date = true;
+            }
         }
     }
         
