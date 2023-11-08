@@ -47,7 +47,7 @@ std::vector<ImageFloatBox> DialogBubbleDetector::detect_all(const ImageViewRGB32
     const double screen_rel_width = (screen.width() / 1920.0);
     const double screen_rel_height = (screen.height() / 1080.0);
 
-    const double min_object_width = 180.0;
+    const double min_object_width = 100.0;//180.0;
     const double min_object_height = 100.0;
 
     const size_t min_width = size_t(screen_rel_width * min_object_width);
@@ -74,7 +74,7 @@ std::vector<ImageFloatBox> DialogBubbleDetector::detect_all(const ImageViewRGB32
             ImageFloatBox border_float_box = pixelbox_to_floatbox(screen, border_pixel_box);
             ImageViewRGB32 dialog = extract_box_reference(screen, border_pixel_box);
 
-            //dialog.save("./DebugDumps/sv_auction/" + now_to_filestring() + "_orange.png");
+            //dialog.save("./DebugDumps/auction_farmer/" + now_to_filestring() + "_orange.png");
 
             // Second session: find yellow objects within the found orange objects
             PackedBinaryMatrix yellow_matrix = compress_rgb32_to_binary_range(dialog, MIN_YELLOW_THRESHOLD, MAX_YELLOW_THRESHOLD);
