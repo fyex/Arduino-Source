@@ -27,7 +27,6 @@
 #include "PokemonSV/Resources/PokemonSV_AuctionItemNames.h"
 #include "PokemonSwSh/Commands/PokemonSwSh_Commands_DateSpam.h"
 #include "NintendoSwitch/Commands/NintendoSwitch_Commands_PushButtons.h"
-
 #include "PokemonSV_AuctionFarmer.h"
 
 #include <algorithm>
@@ -346,6 +345,7 @@ bool AuctionFarmer::reset_position(SingleSwitchProgramEnvironment& env, BotBaseC
     bool did_move = false;
     size_t tries = 0;
     while (dialog_centers.size() < 3 || !is_good_dialog_center(dialog_centers[0].first, dialog_centers[0].second)) {
+        env.log("Dialogs  found: " + std::to_string(dialog_centers.size()));
         // Restart in case we lose all orientation points, i.e. dialog bubbles
         if (dialog_centers.empty()) {
             VideoSnapshot screen = env.console.video().snapshot();
@@ -390,7 +390,7 @@ bool AuctionFarmer::reset_position(SingleSwitchProgramEnvironment& env, BotBaseC
             float diff_right = (1 - optimal_x) - center_x;
             joystick_modifier_x = std::abs(diff_left) < std::abs(diff_right) ? diff_left : diff_right;
             joystick_x = (joystick_modifier_x < 0) ? 192 : 64;
-        }     
+        }
         uint16_t joystick_ticks_x = std::abs(joystick_modifier_x * TICKS_PER_SECOND * 5) + 10; // +10, so there is always some change, but not overshooting the target
         pbf_move_left_joystick(context, joystick_x, 128, joystick_ticks_x, 20);
 
@@ -554,7 +554,6 @@ void AuctionFarmer::program(SingleSwitchProgramEnvironment& env, BotBaseContext&
         size_t npc_tries = 0;
         std::vector<std::pair<AuctionOffer, ImageFloatBox>> old_offers;
         while (!should_increase_date) {
-            
             if (!ONE_NPC) {
                 reset_orientation(env, context, false);
             }
@@ -599,6 +598,9 @@ void AuctionFarmer::program(SingleSwitchProgramEnvironment& env, BotBaseContext&
                     break;
                 }
             }
+            if (did_move) {
+                should_increase_date = true;
+            }
             if (!should_increase_date) {
                 reset_auctions(env, context, false, year, current_position_is_east);
                 stats.m_resets++;
@@ -607,10 +609,6 @@ void AuctionFarmer::program(SingleSwitchProgramEnvironment& env, BotBaseContext&
             env.update_stats();
             pbf_wait(context, 125);
             context.wait_for_all_requests();
-
-            if (did_move) {
-                should_increase_date = true;
-            }
         }
     }
         
