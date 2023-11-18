@@ -5,14 +5,18 @@
  */
 
 #include "CommonFramework/ImageTools/BinaryImage_FilterRgb32.h"
+#include "CommonFramework/ImageTools/ImageFilter.h"
+#include "CommonFramework/ImageTools/ImageStats.h"
+#include "CommonFramework/ImageTools/SolidColorTest.h"
+#include "CommonFramework/ImageTypes/ImageRGB32.h"
 #include "CommonFramework/ImageTypes/ImageViewRGB32.h"
 #include "CommonFramework/ImageTypes/BinaryImage.h"
 #include "CommonFramework/VideoPipeline/VideoOverlayScopes.h"
 #include "Kernels/Waterfill/Kernels_Waterfill_Session.h"
 #include "Kernels/Waterfill/Kernels_Waterfill_Types.h"
 #include "PokemonSV_DialogBubbleDetector.h"
-
-//#include "Common/Cpp/PrettyPrint.h"
+#include "Common/Cpp/PrettyPrint.h"
+#include <iostream>
 
 
 namespace PokemonAutomation{
@@ -48,7 +52,7 @@ std::vector<ImageFloatBox> DialogBubbleDetector::detect_all(const ImageViewRGB32
     const double screen_rel_height = (screen.height() / 1080.0);
 
     const double min_object_width = 100.0;//180.0;
-    const double min_object_height = 100.0;
+    const double min_object_height = 70.0;
 
     const size_t min_width = size_t(screen_rel_width * min_object_width);
     const size_t min_height = size_t(screen_rel_height * min_object_height);
@@ -59,7 +63,7 @@ std::vector<ImageFloatBox> DialogBubbleDetector::detect_all(const ImageViewRGB32
         PackedBinaryMatrix border_matrix = compress_rgb32_to_binary_range(screen, MIN_BORDER_THRESHOLD, MAX_BORDER_THRESHOLD);
 
         std::unique_ptr<WaterfillSession> session = make_WaterfillSession(border_matrix);
-        
+
         auto iter = session->make_iterator(50);
         WaterfillObject object;
         while (iter->find_next(object, true)) {
@@ -78,11 +82,13 @@ std::vector<ImageFloatBox> DialogBubbleDetector::detect_all(const ImageViewRGB32
 
             // Second session: find yellow objects within the found orange objects
             PackedBinaryMatrix yellow_matrix = compress_rgb32_to_binary_range(dialog, MIN_YELLOW_THRESHOLD, MAX_YELLOW_THRESHOLD);
+            ImageRGB32 black_white_image = to_blackwhite_rgb32_range(screen, MIN_BORDER_THRESHOLD, MAX_BORDER_THRESHOLD, true);
+            //black_white_image.save("./DebugDumps/auction_farmer/" + now_to_filestring() + "_black.png");
 
             std::unique_ptr<WaterfillSession> yellow_session = make_WaterfillSession(yellow_matrix);
             auto yellow_iter = yellow_session->make_iterator(300);
             WaterfillObject yellow_object;
-            
+
             while (yellow_iter->find_next(yellow_object, true)) {
                 ImagePixelBox dialog_pixel_box(yellow_object);
                 ImageFloatBox translated_dialog_box = translate_to_parent(screen, border_float_box, dialog_pixel_box);
@@ -91,15 +97,43 @@ std::vector<ImageFloatBox> DialogBubbleDetector::detect_all(const ImageViewRGB32
                 double min_y = translated_dialog_box.y;
                 double max_y = min_y + translated_dialog_box.height;
 
+                double border_thickness_x = 0.0010;
+                double border_thickness_y = 0.0010;
+                double corner_size_x = 0.021;//0.021;
+                double corner_size_y = 0.03;//0.035;
+
                 //  Discard small objects and object touching the edge of the screen or the mini map area (potentially incomplete dialog bubbles)
-                if (min_x < 0.0001 || min_y < 0.0001 // touching left or top edge
-                    || max_x > 0.9999 || max_y > 0.9999 // touching right or bottom edge
-                    || (max_x > 0.82 && max_y > 0.68) // touches mini map area
-                    || translated_dialog_box.width < 0.052 || translated_dialog_box.height < 0.0926 // object is too small
+                if (min_x < border_thickness_x || min_y < border_thickness_y // touching left or top edge
+                    || max_x >= 1.0 - border_thickness_x || max_y >= 1.0 - border_thickness_y // touching right or bottom edge
+                    || (max_x >= 0.82 - border_thickness_x && max_y >= 0.68 - border_thickness_y) // touches mini map area
+                    || translated_dialog_box.width < 0.052 || translated_dialog_box.height < 0.065 // object is too small
                     || translated_dialog_box.width * screen.width() < translated_dialog_box.height * screen.height() // wrong aspect ratio
                     || translated_dialog_box.height > 0.13 // object is too big
                 )
                 {
+                    continue;
+                }
+
+                //ImageViewRGB32 yellow = extract_box_reference(screen, translated_dialog_box);
+                //yellow.save("./DebugDumps/auction_farmer/" + now_to_filestring() + "_yellow.png");
+
+                // Test for orange border
+                std::vector<ImageFloatBox> border_boxes;
+                border_boxes.emplace_back(ImageFloatBox(min_x - border_thickness_x, min_y + corner_size_y, border_thickness_x, translated_dialog_box.height - 2 * corner_size_y)); // left border
+                border_boxes.emplace_back(ImageFloatBox(max_x, min_y + corner_size_y, border_thickness_x, translated_dialog_box.height - 2 * corner_size_y)); // right border
+                border_boxes.emplace_back(ImageFloatBox(min_x + corner_size_x, min_y - border_thickness_y, translated_dialog_box.width - 2 * corner_size_x, border_thickness_y)); // top border
+                border_boxes.emplace_back(ImageFloatBox(min_x + corner_size_x, max_y, translated_dialog_box.width - 2 * corner_size_x, border_thickness_y)); // bottom border
+
+                bool is_bad_border = false;
+                for (ImageFloatBox border_box : border_boxes) {
+                    ImageViewRGB32 border = extract_box_reference(black_white_image, border_box);
+                    //border.save("./DebugDumps/auction_farmer/" + now_to_filestring() + "_border.png");
+                    if (!is_black(border)) {
+                        is_bad_border = true;
+                        break;
+                    }
+                }
+                if (is_bad_border) {
                     continue;
                 }
 
@@ -114,16 +148,14 @@ std::vector<ImageFloatBox> DialogBubbleDetector::detect_all(const ImageViewRGB32
                     continue;
                 }
 
-
                 dialog_boxes.emplace_back(translated_dialog_box);
-
-                //ImageViewRGB32 image = extract_box_reference(screen, translated_dialog_box);
-                //image.save("./DebugDumps/sv_auction/" + now_to_filestring() + "_yellow.png");
             }
         }
     }
     return dialog_boxes;
 }
+
+
 
 
 
