@@ -68,6 +68,8 @@ private:
     SectionDividerOption m_advanced_options;
     FloatingPointOption OPTIMAL_X;
     FloatingPointOption X_ALPHA;
+    FloatingPointOption OPTIMAL_Y;
+    FloatingPointOption Y_ALPHA;
 
     std::vector<ImageFloatBox> detect_dialog_boxes(const ImageViewRGB32& screen);
     void reset_auctions(SingleSwitchProgramEnvironment& env, BotBaseContext& context, bool do_full_reset, uint8_t& year, bool current_position_is_east);
@@ -80,7 +82,7 @@ private:
     void get_bubble_center(ImageFloatBox bubble, float& center_x, float& center_y);
     void move_to_dialog(SingleSwitchProgramEnvironment& env, BotBaseContext& context, AuctionOffer offer, bool& is_new_position_east);
 
-    bool is_good_dialog_center(float center_x, float center_y);
+    bool is_good_dialog_center(float center_x, float center_y, bool ignore_x = false, bool ignore_y = false);
 
     std::vector<std::pair<float, float>> detect_sorted_dialog_centers(SingleSwitchProgramEnvironment& env, BotBaseContext& context);
 

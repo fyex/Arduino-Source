@@ -82,20 +82,22 @@ AuctionFarmer::AuctionFarmer()
         LockMode::LOCK_WHILE_RUNNING,
         true
     )
+    , ONE_NPC("<b>One NPC:</b><br>Check only the NPC you're standing in front of.", LockMode::LOCK_WHILE_RUNNING, true)
     , TARGET_ITEMS("<b>Items:</b><br>Multiple Items can be selected. The program will bid on any selected item which is offered.")
     , NOTIFICATION_STATUS_UPDATE("Status Update", true, false, std::chrono::seconds(3600))
     , NOTIFICATION_AUCTION_WIN("Auction Win", true, false, ImageAttachmentMode::JPG, {"Notifs"})
     , NOTIFICATIONS({
-        &NOTIFICATION_STATUS_UPDATE,
-        &NOTIFICATION_AUCTION_WIN,
-        &NOTIFICATION_PROGRAM_FINISH,
-        &NOTIFICATION_ERROR_RECOVERABLE,
-        &NOTIFICATION_ERROR_FATAL,
-    })
+                    &NOTIFICATION_STATUS_UPDATE,
+                    &NOTIFICATION_AUCTION_WIN,
+                    &NOTIFICATION_PROGRAM_FINISH,
+                    &NOTIFICATION_ERROR_RECOVERABLE,
+                    &NOTIFICATION_ERROR_FATAL,
+})
     , m_advanced_options("<font size=4><b>Advanced Options: (developer only)</b></font>")
-    , ONE_NPC("<b>One NPC:</b><br>Check only the NPC you're standing in front of.", LockMode::LOCK_WHILE_RUNNING, true)
-    , OPTIMAL_X("<b>Optimal x:</b>Intended x-coordinate for the center of dialog bubbles.", LockMode::LOCK_WHILE_RUNNING, 0.3, 0.0, 1.0)
-    , X_ALPHA("<b>x alpha:</b>Threshold for the acceptable x-coordinate range.", LockMode::LOCK_WHILE_RUNNING, 0.05, 0.0, 1.0)
+    , OPTIMAL_X("<b>Optimal x:</b> Intended x-coordinate for the center of dialog bubbles.", LockMode::LOCK_WHILE_RUNNING, 0.26, 0.0, 1.0)
+    , X_ALPHA("<b>x alpha:</b> Threshold for the acceptable x-coordinate range.", LockMode::LOCK_WHILE_RUNNING, 0.02, 0.0, 1.0)
+    , OPTIMAL_Y("<b>Optimal y:</b> Intended y-coordinate for the center of dialog bubbles.", LockMode::LOCK_WHILE_RUNNING, 0.24, 0.0, 1.0)
+    , Y_ALPHA("<b>y alpha:</b> Threshold for the acceptable y-coordinate range.", LockMode::LOCK_WHILE_RUNNING, 0.02, 0.0, 1.0)
 {
     PA_ADD_OPTION(LANGUAGE);
     PA_ADD_OPTION(ONE_NPC);
@@ -105,6 +107,8 @@ AuctionFarmer::AuctionFarmer()
         PA_ADD_STATIC(m_advanced_options);
         PA_ADD_OPTION(OPTIMAL_X);
         PA_ADD_OPTION(X_ALPHA);
+        PA_ADD_OPTION(OPTIMAL_Y);
+        PA_ADD_OPTION(Y_ALPHA);
     }
 }
 
@@ -250,7 +254,7 @@ std::pair<AuctionOffer, ImageFloatBox> AuctionFarmer::find_target(SingleSwitchPr
 
     throw OperationFailedException(
         ErrorReport::SEND_ERROR_REPORT, env.console,
-        "Lost offer dialog for wanted item.",
+        "Lost offer dialog for wanted item: " + wanted.item,
         true
     );
 }
@@ -270,6 +274,7 @@ void AuctionFarmer::find_target_bubble_center(SingleSwitchProgramEnvironment& en
 // Dialog is the only piece of orientation we have, so the goal is to walk next to the dialog bubble
 // This is only used for multiple NPCs.
 void AuctionFarmer::move_to_dialog(SingleSwitchProgramEnvironment& env, BotBaseContext& context, AuctionOffer wanted, bool& is_new_position_east) {
+    env.log("Moving to NPC.");
     float center_x = 0.0f;
     float center_y = 0.0f;
 
@@ -336,11 +341,14 @@ bool AuctionFarmer::reset_position(SingleSwitchProgramEnvironment& env, BotBaseC
         return false;
     }
 
+    env.log("Resetting position.");
     reset_orientation(env, context, false);
     std::vector<std::pair<float, float>> dialog_centers = detect_sorted_dialog_centers(env, context);
 
-    OverlayBoxScope optimum_left(env.console.overlay(), ImageFloatBox(OPTIMAL_X - (X_ALPHA / 2.0), 0.0, X_ALPHA, 1.0), COLOR_DARK_BLUE);
-    OverlayBoxScope optimum_right(env.console.overlay(), ImageFloatBox(1 - (OPTIMAL_X - (X_ALPHA / 2.0)), 0.0, X_ALPHA, 1.0), COLOR_DARK_BLUE);
+    //OverlayBoxScope optimum_left(env.console.overlay(), ImageFloatBox(OPTIMAL_X - (X_ALPHA / 2.0), 0.0, X_ALPHA, 1.0), COLOR_DARK_BLUE);
+    //OverlayBoxScope optimum_right(env.console.overlay(), ImageFloatBox(1 - (OPTIMAL_X - (X_ALPHA / 2.0)), 0.0, X_ALPHA, 1.0), COLOR_DARK_BLUE);
+    OverlayBoxScope optimum_left(env.console.overlay(), ImageFloatBox(OPTIMAL_X - (X_ALPHA / 2.0), OPTIMAL_Y - (Y_ALPHA/2.0), X_ALPHA, Y_ALPHA), COLOR_DARK_BLUE);
+    OverlayBoxScope optimum_right(env.console.overlay(), ImageFloatBox(1 - (OPTIMAL_X - (X_ALPHA / 2.0)), 1 - (OPTIMAL_Y - (Y_ALPHA / 2.0)), X_ALPHA, Y_ALPHA), COLOR_DARK_BLUE);
 
     bool did_move = false;
     size_t tries = 0;
@@ -377,7 +385,7 @@ bool AuctionFarmer::reset_position(SingleSwitchProgramEnvironment& env, BotBaseC
         }
 
         float optimal_x = OPTIMAL_X;
-        float optimal_y = 0.3f;
+        float optimal_y = OPTIMAL_Y;
         float center_x = dialog_centers[0].first;
         float center_y = dialog_centers[0].second;
 
@@ -385,7 +393,7 @@ bool AuctionFarmer::reset_position(SingleSwitchProgramEnvironment& env, BotBaseC
 
         float joystick_modifier_x = 0.0f;
         uint8_t joystick_x = 128;
-        if (!is_good_dialog_center(center_x, center_y)) {
+        if (!is_good_dialog_center(center_x, center_y, false, true)) {
             float diff_left = optimal_x - center_x;
             float diff_right = (1 - optimal_x) - center_x;
             joystick_modifier_x = std::abs(diff_left) < std::abs(diff_right) ? diff_left : diff_right;
@@ -396,29 +404,36 @@ bool AuctionFarmer::reset_position(SingleSwitchProgramEnvironment& env, BotBaseC
 
         
         float joystick_modifier_y = 0.0f;
-        float diff_top = optimal_y - center_y;
-        joystick_modifier_y = diff_top;
-
-        uint8_t joystick_y = move_down ? 192 : 64;
+        uint8_t joystick_y = 128;
+        if (!is_good_dialog_center(center_x, center_y, true, false)) {
+            float diff_top = optimal_y - center_y;
+            joystick_modifier_y = diff_top;
+            // TODO: be able to move back once you overshot
+            joystick_y = move_down ? 192 : 64;
+        }
         uint16_t joystick_ticks_y = std::abs(joystick_modifier_y * TICKS_PER_SECOND * 5);
-
         pbf_move_left_joystick(context, 128, joystick_y, joystick_ticks_y, 20);
 
-        dialog_centers = detect_sorted_dialog_centers(env, context);
 
+        dialog_centers = detect_sorted_dialog_centers(env, context);
         did_move = true;
     }
 
     return did_move;
 }
 
-bool AuctionFarmer::is_good_dialog_center(float center_x, float center_y) {
+bool AuctionFarmer::is_good_dialog_center(float center_x, float center_y, bool ignore_x, bool ignore_y) {
     // Optimal x position does depend on y. 
     // However, since the program can correct later we assume a vertical line, i.e. a y-independent "optimal" x-coordinate
     float optimal_x = OPTIMAL_X;
-    float max_distance = X_ALPHA;
+    float max_distance_x = X_ALPHA;
+    float optimal_y = OPTIMAL_Y;
+    float max_distance_y = Y_ALPHA;
+
+    bool good_x = std::abs(optimal_x - center_x) <= max_distance_x || std::abs((1 - optimal_x) - center_x) <= max_distance_x || ignore_x;
+    bool good_y = std::abs(optimal_y - center_y) <= max_distance_y || std::abs((1 - optimal_y) - center_y) <= max_distance_y || ignore_y;
    
-    return std::abs(optimal_x - center_x) <= max_distance || std::abs((1- optimal_x) - center_x) <= max_distance;
+    return good_x && good_y;
 }
 
 
