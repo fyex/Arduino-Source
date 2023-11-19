@@ -128,7 +128,8 @@ std::vector<ImageFloatBox> DialogBubbleDetector::detect_all(const ImageViewRGB32
                 for (ImageFloatBox border_box : border_boxes) {
                     ImageViewRGB32 border = extract_box_reference(black_white_image, border_box);
                     //border.save("./DebugDumps/auction_farmer/" + now_to_filestring() + "_border.png");
-                    if (!is_black(border)) {
+                    FloatPixel average = image_average(border);
+                    if (average.r > 50.0) {
                         is_bad_border = true;
                         break;
                     }
