@@ -343,15 +343,23 @@ bool AuctionFarmer::reset_position(SingleSwitchProgramEnvironment& env, BotBaseC
 
     env.log("Resetting position.");
     reset_orientation(env, context, false);
+
     std::vector<std::pair<float, float>> dialog_centers = detect_sorted_dialog_centers(env, context);
 
-    //OverlayBoxScope optimum_left(env.console.overlay(), ImageFloatBox(OPTIMAL_X - (X_ALPHA / 2.0), 0.0, X_ALPHA, 1.0), COLOR_DARK_BLUE);
-    //OverlayBoxScope optimum_right(env.console.overlay(), ImageFloatBox(1 - (OPTIMAL_X - (X_ALPHA / 2.0)), 0.0, X_ALPHA, 1.0), COLOR_DARK_BLUE);
+    // Walk in the general direction (east-west / up-down)
+    if (dialog_centers.size() < 3) {
+        uint8_t joystick_y = move_down ? 192 : 64;
+        pbf_move_left_joystick(context, 128, joystick_y, 60, 20);
+        dialog_centers = detect_sorted_dialog_centers(env, context);
+    }
+
     OverlayBoxScope optimum_left(env.console.overlay(), ImageFloatBox(OPTIMAL_X - (X_ALPHA / 2.0), OPTIMAL_Y - (Y_ALPHA/2.0), X_ALPHA, Y_ALPHA), COLOR_DARK_BLUE);
-    OverlayBoxScope optimum_right(env.console.overlay(), ImageFloatBox(1 - (OPTIMAL_X - (X_ALPHA / 2.0)), 1 - (OPTIMAL_Y - (Y_ALPHA / 2.0)), X_ALPHA, Y_ALPHA), COLOR_DARK_BLUE);
+    OverlayBoxScope optimum_right(env.console.overlay(), ImageFloatBox(1 - (OPTIMAL_X - (X_ALPHA / 2.0)), OPTIMAL_Y - (Y_ALPHA / 2.0), X_ALPHA, Y_ALPHA), COLOR_DARK_BLUE);
+    OverlayBoxScope optimum_down_left(env.console.overlay(), ImageFloatBox(OPTIMAL_X - (X_ALPHA / 2.0), 1 - (OPTIMAL_Y - (Y_ALPHA / 2.0)), X_ALPHA, Y_ALPHA), COLOR_DARK_BLUE);
 
     bool did_move = false;
     size_t tries = 0;
+
     while (dialog_centers.size() < 3 || !is_good_dialog_center(dialog_centers[0].first, dialog_centers[0].second)) {
         env.log("Dialogs  found: " + std::to_string(dialog_centers.size()));
         // Restart in case we lose all orientation points, i.e. dialog bubbles
@@ -406,10 +414,10 @@ bool AuctionFarmer::reset_position(SingleSwitchProgramEnvironment& env, BotBaseC
         float joystick_modifier_y = 0.0f;
         uint8_t joystick_y = 128;
         if (!is_good_dialog_center(center_x, center_y, true, false)) {
-            float diff_top = optimal_y - center_y;
-            joystick_modifier_y = diff_top;
-            // TODO: be able to move back once you overshot
-            joystick_y = move_down ? 192 : 64;
+            float diff_up = optimal_y - center_y;
+            float diff_down = (1 - optimal_x) - center_x;
+            joystick_modifier_y = std::abs(diff_up) < std::abs(diff_down) ? diff_up : diff_down;
+            joystick_y = (joystick_modifier_y < 0) ? 192 : 64;
         }
         uint16_t joystick_ticks_y = std::abs(joystick_modifier_y * TICKS_PER_SECOND * 5);
         pbf_move_left_joystick(context, 128, joystick_y, joystick_ticks_y, 20);
