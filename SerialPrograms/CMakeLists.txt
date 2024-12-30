@@ -1894,6 +1894,8 @@ file(GLOB MAIN_SOURCES
     Source/PokemonSwSh/Programs/RNG/PokemonSwSh_BasicRNG.h
     Source/PokemonSwSh/Programs/RNG/PokemonSwSh_CramomaticRNG.cpp
     Source/PokemonSwSh/Programs/RNG/PokemonSwSh_CramomaticRNG.h
+    Source/PokemonSwSh/Programs/RNG/PokemonSwSh_DailyHighlightRNG.cpp
+    Source/PokemonSwSh/Programs/RNG/PokemonSwSh_DailyHighlightRNG.h
     Source/PokemonSwSh/Programs/RNG/PokemonSwSh_SeedFinder.cpp
     Source/PokemonSwSh/Programs/RNG/PokemonSwSh_SeedFinder.h
     Source/PokemonSwSh/Programs/ReleaseHelpers.h
@@ -1933,6 +1935,8 @@ file(GLOB MAIN_SOURCES
     Source/PokemonSwSh/Programs/ShinyHuntUnattended/PokemonSwSh_ShinyHuntUnattended-SwordsOfJustice.h
     Source/PokemonSwSh/Programs/TestPrograms/PokemonSwSh_ShinyEncounterTester.cpp
     Source/PokemonSwSh/Programs/TestPrograms/PokemonSwSh_ShinyEncounterTester.h
+    Source/PokemonSwSh/Resources/PokemonSwSh_DailyHighlightDatabase.cpp
+    Source/PokemonSwSh/Resources/PokemonSwSh_DailyHighlightDatabase.h
     Source/PokemonSwSh/Resources/PokemonSwSh_MaxLairDatabase.cpp
     Source/PokemonSwSh/Resources/PokemonSwSh_MaxLairDatabase.h
     Source/PokemonSwSh/Resources/PokemonSwSh_NameDatabase.cpp
